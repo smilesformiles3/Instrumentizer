@@ -4,6 +4,7 @@ from scipy.io import wavfile as wav
 from scipy import fftpack
 import pyrubberband as pyrb
 from math import log2
+import matplotlib.pyplot as plt
 
 
 class Track:
@@ -13,11 +14,12 @@ class Track:
         self.msgs = midi.tracks[track]  # midi messages
         self.rate = rate
         self.pitch = self.instrument_base_pitch()
+        print('pitch', self.pitch)
         self.midi = midi
         self.tempo = [i for i in midi.tracks[0] if i.type == 'set_tempo'][0].tempo
         self.ticks_per_beat = midi.ticks_per_beat
-        self.length = ([i for i in midi.tracks[0] if i.type == 'end_of_track'][0].time * self.tempo)/(self.ticks_per_beat * 1000000)
-        self.waveform = np.zeros(self.length * rate)  # output waveform
+        self.length = midi.length
+        self.waveform = np.zeros(int(self.length * rate))  # output waveform
 
     def midi_to_waveform(self):
         pos = 0  # in ticks
@@ -31,19 +33,27 @@ class Track:
                 startpos = notes.pop(msg.note)
                 # modify instrument clip with pitch and tempo, pad with zeros (convert ticks to samples)
                 preclip = np.zeros(int(startpos * (self.tempo * self.rate / (self.ticks_per_beat * 1000000))))
+                print(pos)
                 instrclip = pyrb.pitch_shift(pyrb.time_stretch(self.instrument, self.rate, len(self.instrument)/((pos - startpos) * (self.tempo * self.rate / (self.ticks_per_beat * 1000000)))), self.rate, -12*log2(self.pitch/(440*(2**((msg.note-69)/12)))))
                 postclip = np.zeros(len(self.waveform) - len(preclip) - len(instrclip))
                 clip = np.concatenate((preclip, instrclip, postclip))
                 self.waveform += clip
 
     def instrument_base_pitch(self):
-        out = fftpack.rfft(self.instrument)  # reverse fast fourier transform, to convert wavelengths into time
+        out = fftpack.rfft(self.instrument)  # real fast fourier transform, to convert time domain into frequency domain
         power = np.abs(out) ** 2  # power array
         freqs = fftpack.fftfreq(out.size, d=1 / self.rate)
-        return freqs[np.argmax(power)]
+        plt.plot(freqs, power)
+        plt.show()
+        x = freqs[np.argmax(power)]
+        if x == 0:
+            power[np.argmax(power)] = 0
+            x = freqs[np.argmax(power)]
+        return x
 
     def export(self, filename):
         wav.write(filename + ".wav", self.rate, self.waveform)
+        print('saved!')
 
 
 # mid = mido.MidiFile('wii-wiisports-titlescreen.midi')
