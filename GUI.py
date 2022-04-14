@@ -16,8 +16,8 @@ midiButton = sg.FileBrowse(file_types=(("MIDI Files", ".mid .midi"),), pad=5, en
                            target='MIDI_SELECT')
 wavButton = sg.FileBrowse(file_types=(("WAV files", ".wav"),), pad=5, key='WAV_SELECT')
 goButton = sg.Button(button_text="Go!", pad=5, enable_events=True, key="go")
-# containerColumn = sg.Column(layout=[[sg.Sizer(400, 100)]], pad=5, vertical_scroll_only=True, scrollable=True, background_color='#4b4b4b')
-containerList = sg.Listbox(size=(40, 10), values=[], background_color='#4b4b4b', highlight_background_color='#ff9100')
+containerList = sg.Listbox(size=(40, 10), values=[], background_color='#4b4b4b', highlight_background_color='#ff9100',
+                           key='TRACK_SELECT', select_mode='multiple')
 progressBar = sg.ProgressBar(max_value=1, size=(10, 10), visible=False, bar_color=('#ff9100', '#ffffff'))
 
 layout = [[title_text],
@@ -38,7 +38,7 @@ class Track:
         self.track = track
         self.msgs = midi.tracks[track]  # midi messages
         self.rate = rate
-        self.pitch = self.instrument_base_pitch()
+        self.pitch = self.instrument.pitch
         # print('pitch', self.pitch)
         self.midi = midi
         self.tempo = [i for i in midi.tracks[0] if i.type == 'set_tempo'][0].tempo
@@ -64,7 +64,37 @@ class Track:
                 postclip = np.zeros(len(self.waveform) - len(preclip) - len(instrclip))
                 clip = np.concatenate((preclip, instrclip, postclip))
                 self.waveform += clip
+
+    def export(self, filename):
+        wav.write(filename + ".wav", self.rate, self.waveform)
+        print('saved!')
+
+
+class Midi:
+    def __init__(self, midi, instrument, rate=48000):
+        self.midi = midi
+        self.waveform = np.zeros(int(midi.length * rate))
+        self.instrument = instrument
+        self.rate = rate
+
+    def instrumentize_multiple(self, tracks):
+        for i, track in enumerate(tracks):
+            t = Track(self.instrument, self.midi, track, self.rate)
+            t.midi_to_waveform()
+            self.waveform += t.waveform
+            window.write_event_value('trackcomplete',
+                                     sum(msg.time for msg in midi.tracks[track] if msg.type in ['note_on', 'note_off']))
         return self
+
+    def export(self, filename):
+        wav.write(filename + ".wav", self.rate, self.waveform)
+        print('saved!')
+
+
+class Instrument:
+    def __init__(self, instrument):
+        self.instrument = instrument
+        self.pitch = self.instrument_base_pitch()
 
     def instrument_base_pitch(self):
         out = fftpack.rfft(self.instrument)  # real fast fourier transform, to convert time domain into frequency domain
@@ -78,30 +108,40 @@ class Track:
             x = freqs[np.argmax(power)]
         return x
 
-    def export(self, filename):
-        wav.write(filename + ".wav", self.rate, self.waveform)
-        print('saved!')
 
-
+counter = 0  # used for progress bar
 while True:
     event, values = window.read()
     if event == 'Exit' or event == sg.WIN_CLOSED:
         break
     elif event == 'MIDI_SELECT':
         midiFilenameInput.update(value=values['MIDI_SELECT'])
+        midi = mido.MidiFile(values['MIDI_SELECT'])
+        names = []
+        for i, track in enumerate(midi.tracks):
+            for msg in track:
+                if msg.type == 'track_name':
+                    names.append('Track ' + str(i) + ': ' + msg.name)
+                    break
+            else:
+                names.append('Track ' + str(i))
+        containerList.update(values=names)
     elif event == 'go':
+        print(values)
+        counter = 0
         for element in [midiFilenameInput, wavFilenameInput, midiButton, wavButton, goButton]:
             element.update(disabled=True)
-        rate, data = wav.read(values[1])
+        rate, data = wav.read(values['WAV_SELECT'])
         try:
             data = data.T[0, :]
         except:
             pass
-        midi = mido.MidiFile(values[0])
-        track = 9
-        totalticks = sum(msg.time for msg in midi.tracks[track] if msg.type in ['note_on', 'note_off'])
+        midi = mido.MidiFile(values['MIDI_SELECT'])
+        mobj = Midi(midi, data, rate)
+        tracks = [int(track.split()[1].strip(':')) for track in values['TRACK_SELECT']]
+        totalticks = sum(msg.time for track in tracks for msg in midi.tracks[track] if msg.type in ['note_on', 'note_off'])
         progressBar.update(current_count=0, max=totalticks, visible=True)
-        t = Track(data, midi, track, rate)
+        # tobjs = [Track(data, midi, track, rate) for track in tracks]
         # plt.plot(data)
         # plt.show()
         # print(t.tempo)
@@ -109,12 +149,14 @@ while True:
         # print(t.length)
         # print(t.midi.tracks[track])
         # print(t.rate)
-        window.perform_long_operation(t.midi_to_waveform, 'instrumentized')
+        window.perform_long_operation(lambda: mobj.instrumentize_multiple(tracks), 'instrumentized')
     elif event == 'pbar':
-        progressBar.update(current_count=values['pbar'])
+        progressBar.update(current_count=counter + values['pbar'])
+    elif event == 'trackcomplete':
+        counter += values['trackcomplete']
     elif event == 'instrumentized':
         for element in [midiFilenameInput, wavFilenameInput, midiButton, wavButton, goButton]:
             element.update(disabled=False)
         progressBar.update(visible=False)
-        t = values['instrumentized']
-        t.export('track' + str(t.track))
+        m = values['instrumentized']
+        m.export('trackcombo')
