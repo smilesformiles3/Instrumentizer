@@ -56,7 +56,7 @@ class Track:
         print('saved!')
 
 
-# mid = mido.MidiFile('wii-wiisports-titlescreen.midi')
+mid = mido.MidiFile(r"C:\Users\nikhi\PycharmProjects\Instrumentizer\Test Files\wii-wiisports-titlescreen.mid")
 # print(mid.tracks[0])
 # rate, data = wav.read('converted.wav')
 #
